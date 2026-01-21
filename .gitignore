@@ -1,0 +1,5 @@
+lib/auto/yolov7/traced_model.pt
+LayerSensing/TrackNet/TrackNet10/weights/*.tar
+*.pt
+*.tar
+*.weights

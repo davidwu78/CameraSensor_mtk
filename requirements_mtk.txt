@@ -1,0 +1,10 @@
+matplotlib
+opencv-python
+paho-mqtt
+tqdm
+pybind11
+mypy
+torch
+moviepy<2.0.0
+pandas
+scipy

@@ -27,7 +27,12 @@ void Record::createH264Bin()
 
     GstElement *queue = gst_element_factory_make("queue", NULL);
     g_object_set(queue, "leaky", 1, NULL);
-    _file_h264_encoder = gst_element_factory_make("nvh264enc", NULL);
+    
+    // [Modified] nvh264enc -> x264enc
+    _file_h264_encoder = gst_element_factory_make("x264enc", NULL);
+    // Use ultrafast to save CPU on ARM
+    g_object_set(_file_h264_encoder, "speed-preset", 1, "tune", 0x00000004, NULL); // 1: ultrafast, tune: zerolatency
+
     GstElement *parse = gst_element_factory_make("h264parse", NULL);
     GstElement *muxer = gst_element_factory_make("mp4mux", NULL);
     _file_h264_sink = gst_element_factory_make("filesink", "record_h264_sink");
@@ -63,10 +68,17 @@ void Record::createLosslessBin()
     _file_lossless_bin = gst_bin_new("record_lossless_bin");
 
     GstElement *queue = gst_element_factory_make("queue", NULL);
-    GstElement *_file_lossless_encoder = gst_element_factory_make("nvh265enc", NULL);
-    g_object_set(_file_lossless_encoder, "preset", 7, NULL); // (7): lossless-hp - Lossless, High Performance 
-    g_object_set(_file_lossless_encoder, "rc-mode", 1, NULL); // (1): constqp - Constant Quantization
-    GstElement *parser = gst_element_factory_make("h265parse", NULL);
+    
+    // [Modified] nvh265enc -> x264enc (configured for lossless)
+    // Using x264enc with qp=0 is a standard way to achieve lossless encoding on CPU
+    GstElement *_file_lossless_encoder = gst_element_factory_make("x264enc", NULL);
+    // g_object_set(_file_lossless_encoder, "qp", 0, NULL); // 0 means lossless
+    g_object_set(_file_lossless_encoder, "quantizer", 0, "pass", 4, NULL);
+    g_object_set(_file_lossless_encoder, "speed-preset", 1, "tune", 0x00000004, NULL); // ultrafast, zerolatency
+
+    // [Modified] h265parse -> h264parse (since we switched to x264enc)
+    GstElement *parser = gst_element_factory_make("h264parse", NULL);
+    
     GstElement *muxer = gst_element_factory_make("mp4mux", NULL);
     _file_lossless_sink = gst_element_factory_make("filesink", "record_lossless_sink");
     g_object_set(G_OBJECT(_file_lossless_sink), "sync", false, NULL);
@@ -102,40 +114,54 @@ void Record::createPipeline()
     _record_queue = gst_element_factory_make("queue", "record_queue");
     g_object_set(_record_queue, "leaky", 1, NULL);
 
-    GstElement *record_uploader = gst_element_factory_make("cudaupload", "record_cudaupload");
+    // [Modified] Removed cudaupload (not needed for CPU)
+    // GstElement *record_uploader = gst_element_factory_make("cudaupload", "record_cudaupload");
 
-    GstElement *record_videoconvert = gst_element_factory_make("cudaconvert", "record_videoconvert");
+    // [Modified] cudaconvert -> videoconvert
+    GstElement *record_videoconvert = gst_element_factory_make("videoconvert", "record_videoconvert");
 
     _record_tee = gst_element_factory_make("tee", "record_tee");
 
     // for image buffer
     GstElement *imgbuf_queue = gst_element_factory_make("queue", "imgbuf_queue");
     g_object_set(imgbuf_queue, "leaky", 1, NULL);
-    //g_object_set(imgbuf_queue, "max-size-buffers", 0, NULL);
-    //g_object_set(imgbuf_queue, "max-size-bytes", 0, NULL);
-    //g_object_set(imgbuf_queue, "max-size-time", 0, NULL);
+
     GstElement *imgbuf_convert = gst_element_factory_make("videoconvert", "imgbuf_convert");
-    GstElement *imgbuf_scale = gst_element_factory_make("cudascale", "imgbuf_scale");
-    GstElement *imgbuf_download = gst_element_factory_make("cudadownload", "imgbuf_cudadownload");
+    
+    // [Modified] cudascale -> videoscale
+    GstElement *imgbuf_scale = gst_element_factory_make("videoscale", "imgbuf_scale");
+    
+    // [Modified] Removed cudadownload (not needed for CPU)
+    // GstElement *imgbuf_download = gst_element_factory_make("cudadownload", "imgbuf_cudadownload");
+    
     _imgbuf_capsfilter = gst_element_factory_make("capsfilter", "imgbuf_capsfilter");
     GstElement *imgbuf_sink = gst_element_factory_make("appsink", "imgbuf_sink");
     g_object_set(G_OBJECT(imgbuf_sink), "sync", false, NULL);
     g_object_set(G_OBJECT(imgbuf_sink), "emit-signals", TRUE, NULL);
     g_signal_connect(imgbuf_sink, "new-sample", G_CALLBACK(imgbuf_callback), this);
     g_signal_connect(imgbuf_sink, "eos", G_CALLBACK(imgbuf_eos_callback), this);
-    //GstCaps *caps2 = gst_caps_from_string("video/x-raw, width=512, height=288, format=GRAY8");
-    //g_object_set(G_OBJECT(_imgbuf_capsfilter), "caps", caps2, nullptr);
-    //gst_caps_unref(caps2);
 
-    gst_bin_add_many(GST_BIN(_record_bin), _record_queue, record_uploader,
+    // [Modified] Re-linked elements without cuda components
+    // Flow: record_queue -> videoconvert -> tee
+    // Tee Branch 1 (to file): handled in startRecording (dynamically linked)
+    // Tee Branch 2 (to imgbuf): imgbuf_queue -> videoscale -> videoconvert -> capsfilter -> sink
+    
+    gst_bin_add_many(GST_BIN(_record_bin), _record_queue,
                      record_videoconvert, _record_tee,
-                     imgbuf_download, imgbuf_scale, imgbuf_queue,
+                     imgbuf_scale, imgbuf_queue,
                      imgbuf_convert, _imgbuf_capsfilter, imgbuf_sink, nullptr);
     
-    // link main pipeline
+    // link main pipeline part
+    // record_queue -> videoconvert -> tee
+    if (!gst_element_link_many(_record_queue, record_videoconvert, _record_tee, nullptr)) {
+         throw std::runtime_error("Could not link record (main part) elements");
+    }
+
+    // link imgbuf part
+    // tee -> imgbuf_queue -> videoscale -> videoconvert -> capsfilter -> sink
     if (!gst_element_link_many(
-            _record_queue, record_uploader, record_videoconvert, _record_tee,
-            imgbuf_queue, imgbuf_scale, imgbuf_download, imgbuf_convert,
+            _record_tee,
+            imgbuf_queue, imgbuf_scale, imgbuf_convert,
             _imgbuf_capsfilter, imgbuf_sink, nullptr))
     {
         throw std::runtime_error("Could not link record (image_queue) elements");
@@ -207,11 +233,13 @@ void Record::startRecording(std::string filename, bool is_imgbuf_enabled,
         break;
     case RecordMode::H264_LOW:
     case RecordMode::H264_HIGH:
+        // [Modified] x264enc bitrate is in kbit/sec. 
+        // Removed "rc-mode" which is nvidia specific.
         if (this->mode == RecordMode::H264_LOW) {
-            g_object_set(_file_h264_encoder, "rc-mode", 2, "bitrate", 2000, NULL);
+            g_object_set(_file_h264_encoder, "bitrate", 2000, NULL);
         }
         else {
-            g_object_set(_file_h264_encoder, "rc-mode", 7, "bitrate", 10000, NULL);
+            g_object_set(_file_h264_encoder, "bitrate", 10000, NULL);
         }
         g_object_set(_file_h264_sink, "location", (basepath.string() + ".mp4").c_str(), NULL);
         gst_element_set_state(_file_h264_bin, GST_STATE_READY);
@@ -284,9 +312,6 @@ void Record::stopRecording()
     }
 
     // HOTFIX:
-    // 因為接收到上述 is_record_eos 時，filesink有機率還沒把資料處理完成
-    // 導致 mp4 寫入不完全無法撥放，所以這邊先加一個 hotfix 睡1秒
-    // 後續可能要用 bus_watch 等方法確認整個record_bin已經把 EOS event 處理完才能關閉
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
     // stop record pipeline
@@ -316,13 +341,6 @@ void Record::stopRecording()
         break;
 
     }
-
-    // unlink proxy pad
-    //GstPad *sink_pad = gst_element_get_static_pad(_record_queue, "sink");
-    //GstPad *proxy_pad = gst_pad_get_peer(sink_pad);
-    //gst_pad_unlink(proxy_pad, sink_pad);
-    //gst_object_unref(proxy_pad);
-    //gst_object_unref(sink_pad);
 
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_main_bin), GST_DEBUG_GRAPH_SHOW_ALL, "[record_module]stop_final(main)");
     GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(_record_bin), GST_DEBUG_GRAPH_SHOW_ALL, "[record_module]stop_final(record)");
@@ -388,7 +406,7 @@ GstFlowReturn Record::imgbuf_callback(GstElement *sink, gpointer user_data)
         }
         else
         {
-            g_warning("No meta data available");
+            // g_warning("No meta data available");
         }
 
         frame->index = g_atomic_int_get(&rec->frame_idx);
@@ -416,12 +434,16 @@ GstFlowReturn Record::imgbuf_callback(GstElement *sink, gpointer user_data)
 
             GstMapInfo info;
             gst_buffer_map(buffer, &info, GST_MAP_READ);
-            gst_buffer_unmap(buffer, &info);
+            // gst_buffer_unmap(buffer, &info); // Move unmap to after memcpy
+            
             frame->memory_size = info.size;
 
             std::shared_ptr<u_int8_t> memory((u_int8_t *)malloc(info.size), free);
             memcpy(memory.get(), info.data, info.size);
             frame->memory = memory;
+            
+            gst_buffer_unmap(buffer, &info); // Unmap here
+
             //LOG_RECORD_MODULE << "ImageBuffer push frame id=" << frame->index << std::endl;
             rec->_imgbuf->push(frame);
         }

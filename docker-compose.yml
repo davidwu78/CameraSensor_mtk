@@ -1,39 +1,46 @@
 services:
   camera-agent:
-    image: camerasensor_mtk:latest  # 請確認這名稱與你 build 出來的一致
+    image: camerasensor_mtk:latest
     container_name: camerasensor_dev_env
     privileged: true
-    network_mode: "host" # 建議開發階段先用 host 模式，解決 MQTT 連線與 DISPLAY 問題
+    # --- 加入以下設定 ---
+    ulimits:
+      rtprio: 99      # 允許容器請求最高 99 的實時優先級
+      memlock: -1     # 解鎖記憶體鎖定限制，這對硬體加速很有幫助
+      msgqueue: 8192000
+    network_mode: "host"
     environment:
       - DISPLAY=${DISPLAY}
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-      # 如果你的程式依賴特定 MQTT IP，這裡可能需要環境變數
-      - MQTT_BROKER_HOST=192.168.X.X  
     volumes:
       - ./:/app
       - /tmp/.X11-unix:/tmp/.X11-unix
       - $HOME/.Xauthority:/home/mpc/.Xauthority
-      # 如果有其他依賴目錄 (如 test.sh 中的 mdla_benchmark_test) 也要掛載
+      - /home/ubuntu/test-h264.mp4:/tmp/test-h264.mp4
     devices:
       - /dev/apusys:/dev/apusys
       - /dev/apusys_reviser:/dev/apusys_reviser
       - /dev/mali0:/dev/mali0
-      - /dev/video5:/dev/video5 # 請確認這是你相機的正確節點
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
       - /dev/video6:/dev/video6
+      - /dev/media0:/dev/media0
       - /dev/media1:/dev/media1
     group_add:
       - video
       - render
-    # 關鍵：確保使用 micromamba 環境執行 Python
+    # with micromamba
+    # tail -f /dev/null
     command: tail -f /dev/null
+    # command: >
+    #   micromamba run -n camerasensor python3 /app/LayerCamera/device_monitor_proc.py
     # docker compose up -d
     # docker exec -it camerasensor_dev_env bash
-    # 1. 激活環境
-# micromamba activate camerasensor
-
-# # 2. 使用 uv 安裝 opencv (因為你的 Dockerfile 裡有用 uv，速度較快)
-# uv pip install opencv-python
-
-# # 3. 再次嘗試執行你的程式，看看還缺什麼
-# python3 /app/LayerCamera/device_monitor_proc.py
+    # micromamba activate camerasensor
+    # export GST_DEBUG=3
+    # python3 /app/LayerCamera/device_monitor_proc.py

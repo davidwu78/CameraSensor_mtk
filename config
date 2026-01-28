@@ -1,7 +1,7 @@
 [Project]
 logging_level = debug
-mqtt_broker = localhost
-mqtt_port = 1883
+mqtt_broker = 140.113.216.120
+mqtt_port = 1885
 queue_size = 300
 fps = 30
 width = 1440
@@ -15,12 +15,12 @@ cam_general_topic = cam_control
 [CameraReader_0]
 node_type = Reader
 brand = Image_Source
-hw_id = None
+hw_id = 39320299
 general_topic = cam_control
 output_topic = raw_data_0
 monitor_topic = cam_data_0
 publish_fps = 0
-camerasensor_hostname = None
+camerasensor_hostname = tcam-39320299
 
 [CameraReader_1]
 node_type = Reader

@@ -28,7 +28,6 @@ RUN apt-get update \
     && dpkg-reconfigure -f noninteractive tzdata
 
  # 3. sudo, video group
-
 RUN apt-get update \
 && apt-get install -y sudo \
 && groupadd --gid $USER_GID $USERNAME \
@@ -37,7 +36,6 @@ RUN apt-get update \
 && chmod 0440 /etc/sudoers.d/$USERNAME 
 
 # 4. GStreamer & Basic Tools
-# 加入 software-properties-common 以支援 add-apt-repository
 RUN apt-get update && apt-get install -y \
     git vim curl wget usbutils lsb-release pkg-config build-essential cmake \
     software-properties-common gnupg \
@@ -62,7 +60,6 @@ RUN cd /tmp \
     && sudo ./scripts/dependency-manager install -y \
     && mkdir build \
     && cd build \
-    # Sphinx would produce error, so disabled TCAM_BUILD_DOCUMENTATION
     && cmake -DTCAM_BUILD_DOCUMENTATION=OFF .. \
     && make -j$(nproc) \
     && sudo make install \
@@ -78,17 +75,28 @@ RUN apt-get install -y freeglut3 freeglut3-dev mosquitto mosquitto-clients \
     ffmpeg gfortran liblapack-dev liblapacke-dev \
     libopenblas-dev libeigen3-dev libtbb2 libtbb-dev v4l-utils \
     qv4l2 gpac x264 libx264-dev libgtk-3-dev python3-vtk9 python3-gi \
-    python3-gi-cairo gir1.2-gtk-3.0 libffi-dev
+    python3-gi-cairo gir1.2-gtk-3.0 libffi-dev pulseaudio-utils
 
 # ==========================================
-# 6.5 Genio PPA & NeuroPilot Libraries
+# 6.5 Genio PPA & Hardware Accelerated GStreamer
 # ==========================================
-# 這裡加入 PPA 並安裝 Runtime Libraries (不含 Firmware/Drivers)
+# Add MediaTek Genio PPA and update GStreamer to patched version (+genio23)
 RUN add-apt-repository -y ppa:mediatek-genio/genio-public \
-    && apt-add-repository -y ppa:mediatek-genio/genio-proposed \
+    && add-apt-repository -y ppa:mediatek-genio/genio-proposed \
     && apt-get update \
-    && apt install -y mediatek-apusys-firmware-genio700 \
-    && apt-get install -y mediatek-libneuron mediatek-neuron-utils mediatek-libneuron-dev
+    && apt-get install -y mediatek-apusys-firmware-genio700 \
+    && apt-get install -y mediatek-libneuron mediatek-neuron-utils mediatek-libneuron-dev \
+    && apt-get install -y mediatek-vpud-genio700 \
+    # Force installation of patched GStreamer packages to enable v4l2h264enc and NV12_16L32S
+    && apt-get install -y --only-upgrade \
+       gstreamer1.0-plugins-base \
+       gstreamer1.0-plugins-good \
+       gstreamer1.0-plugins-bad \
+       libgstreamer-plugins-base1.0-0 \
+       libgstreamer-plugins-good1.0-0 \
+       libgstreamer-plugins-bad1.0-0 \
+    # Clear GStreamer registry cache so it re-scans the new hardware elements
+    && rm -rf /root/.cache/gstreamer-1.0/
 
 # switch user, setting environment
 USER ${USERNAME}
@@ -109,17 +117,26 @@ RUN micromamba create -n ${MAMBA_ENV_NAME} python=3.10 -y \
     && micromamba activate ${MAMBA_ENV_NAME} \
     && echo "/usr/lib/python3/dist-packages" > ${MAMBA_ROOT_PREFIX}/envs/${MAMBA_ENV_NAME}/lib/python3.10/site-packages/aptlibs.pth
 
-# 8. uv
+# 8. uv & Python Packages
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Copy requirements file to user home
+COPY requirements_mtk.txt /home/${USERNAME}/requirements_mtk.txt
 
 RUN eval "$(micromamba shell hook --shell bash)" \
     && micromamba activate ${MAMBA_ENV_NAME} \
-    && sudo apt-get install -y libgirepository1.0-dev libcairo2-dev \
-    && pip install "setuptools<69" wheel \
-    && pip install "playsound==1.2.2" \
-    && pip install "setuptools==80.1.0" \
-    && uv pip install --system --no-deps pyvista pyvistaqt qtpy scooby \
-       torchvision==0.16.2 torchaudio psutil
+    && sudo apt-get update && sudo apt-get install -y libgirepository1.0-dev libcairo2-dev \
+    # Consolidate Python package installation via uv for speed
+    && uv pip install --system \
+       "setuptools==80.1.0" \
+       wheel \
+       "playsound==1.2.2" \
+    && uv pip install --system -r ~/requirements_mtk.txt \
+    && uv pip install --system --no-deps \
+       pyvista pyvistaqt qtpy scooby \
+       torchvision==0.16.2 torchaudio psutil \
+    # Final cleanup of user-level GStreamer cache
+    && rm -rf ~/.cache/gstreamer-1.0/
 
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/lib
 
@@ -133,3 +150,4 @@ RUN eval "$(micromamba shell hook --shell bash)" \
 RUN unset DEBIAN_FRONTEND
 
 CMD ["/bin/bash"]
+# docker build -f mtk.dev.Dockerfile -t camerasensor_mtk:latest .

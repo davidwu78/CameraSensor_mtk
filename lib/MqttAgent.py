@@ -67,6 +67,7 @@ class MqttAgent:
         if tls is not None:
             self.mqttc.tls_set(**tls)
 
+        print(f"broker ip :{broker_ip} , broker port : {broker_port}")
         self.mqttc.connect(broker_ip or "host.docker.internal", broker_port)
         self.mqttc.loop_start()
 

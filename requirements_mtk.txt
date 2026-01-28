@@ -8,3 +8,4 @@ torch
 moviepy<2.0.0
 pandas
 scipy
+numpy=1.24.3

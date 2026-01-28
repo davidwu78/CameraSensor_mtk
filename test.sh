@@ -1,7 +1,6 @@
 xhost +local:
 docker run -it --rm \
 --privileged \
---name camerasensor_dev_env \
 --group-add video \
 --group-add render \
 --device /dev/apusys \
@@ -14,6 +13,4 @@ docker run -it --rm \
 -e DISPLAY=$DISPLAY \
 -v /tmp/.X11-unix:/tmp/.X11-unix \
 -v $HOME/.Xauthority:/home/mpc/.Xauthority \
--v /home/ubuntu/Desktop/mdla_benchmark_test:/home/mpc/mdla_benchmark_test \
--v /home/ubuntu/Desktop/camerasensor:/home/mpc/camerasensor \
 camerasensor_mtk \

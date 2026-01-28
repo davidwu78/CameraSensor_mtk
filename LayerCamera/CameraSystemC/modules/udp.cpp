@@ -62,24 +62,40 @@ void Udp::createPipeline()
 
     GstElement *scale = gst_element_factory_make("videoscale", nullptr);
     GstElement *convert = gst_element_factory_make("videoconvert", nullptr);
-    GstElement *encoder = gst_element_factory_make("nvh264enc", nullptr);
+    
+    // [Modified] x264enc 軟體編碼
+    GstElement *encoder = gst_element_factory_make("x264enc", nullptr);
     g_object_set(G_OBJECT(encoder), "bitrate", 2000, nullptr);
-    g_object_set(G_OBJECT(encoder), "tune", 0x00000004, nullptr); // (0x00000004): zerolatency
-    g_object_set(G_OBJECT(encoder), "speed-preset", 1, nullptr); // (1): ultrafast
+    g_object_set(G_OBJECT(encoder), "tune", 0x00000004, nullptr); // zerolatency
+    g_object_set(G_OBJECT(encoder), "speed-preset", 1, nullptr); // ultrafast
+
+    // [New] 加入 Capsfilter 強制輸出最相容的 Baseline Profile
+    // 解決 Host PC 報錯 'src->h != 0' 的關鍵之一
+    GstElement *h264caps = gst_element_factory_make("capsfilter", nullptr);
+    GstCaps *p_caps = gst_caps_from_string("video/x-h264, profile=baseline, stream-format=avc, alignment=au");
+    g_object_set(G_OBJECT(h264caps), "caps", p_caps, nullptr);
+    gst_caps_unref(p_caps);
+
     GstElement *parser = gst_element_factory_make("h264parse", nullptr);
+    
+    // [Modified] 設定 config-interval=1
+    // 這會讓元件每秒發送一次 SPS/PPS 標頭資訊，解決接收端高度為 0 的問題
     GstElement *pay = gst_element_factory_make("rtph264pay", nullptr);
     g_object_set(G_OBJECT(pay), "pt", 96, nullptr);
-    g_object_set(G_OBJECT(pay), "config-interval", 1, nullptr);
+    g_object_set(G_OBJECT(pay), "config-interval", 1, nullptr); 
+    
     _udp_sink = gst_element_factory_make("udpsink", nullptr);
-
     g_object_set(G_OBJECT(_udp_sink), "sync", false, nullptr);
 
     gst_bin_add_many(GST_BIN(_udp_bin), _udp_queue,
-                    videorate, scale, convert, capsfilter, _udp_flip, encoder, parser, pay, _udp_sink, nullptr);
-    if (!gst_element_link_many(_udp_queue,
-                    videorate, scale, convert, capsfilter, _udp_flip, encoder, parser, pay, _udp_sink, nullptr))
-      throw std::runtime_error("Could not link elements");
+                    videorate, scale, convert, capsfilter, _udp_flip, 
+                    encoder, h264caps, parser, pay, _udp_sink, nullptr);
 
+    // 重新連結包含新元件的 Pipeline
+    if (!gst_element_link_many(_udp_queue,
+                    videorate, scale, convert, capsfilter, _udp_flip, 
+                    encoder, h264caps, parser, pay, _udp_sink, nullptr))
+      throw std::runtime_error("Could not link elements");
 }
 
 };

@@ -11,7 +11,10 @@ Display::Display(GstElement *main_pipeline, GstElement *main_tee, unsigned long 
 
     GstElement *fpsdisplaysink =
         gst_element_factory_make("fpsdisplaysink", NULL);
-    GstElement *imagesink = gst_element_factory_make("ximagesink", NULL);
+    
+    // [Modified] ximagesink -> autovideosink
+    // autovideosink automatically selects the best available sink (xvimagesink, glimagesink, waylandsink, etc.)
+    GstElement *imagesink = gst_element_factory_make("autovideosink", NULL);
 
     g_object_set(GST_BIN(fpsdisplaysink), "video-sink", imagesink, "sync",
                  false, "text-overlay", true, NULL);
@@ -55,20 +58,24 @@ void Display::createPipeline(GstElement *displaysink)
     GstElement *videorate = gst_element_factory_make("videorate", nullptr);
     GstElement *capsfilter = gst_element_factory_make("capsfilter", nullptr);
 
+    GstElement *videoflip = gst_element_factory_make("videoflip", nullptr);
+
+    // [Modified] Reduce framerate for display to save CPU if necessary, 
+    // but 15fps is already quite low/safe.
     GstCaps *caps = gst_caps_new_simple("video/x-raw",
                                         "framerate", GST_TYPE_FRACTION, 15, 1, nullptr);
 
     g_object_set(G_OBJECT(capsfilter), "caps", caps, nullptr);
     gst_caps_unref(caps);
 
-    GstElement *videoflip = gst_element_factory_make("videoflip", nullptr);
-
     g_object_set(G_OBJECT(videoflip), "video-direction", _direction, nullptr);
 
     GstElement *videoscale = gst_element_factory_make("videoscale", "Display_videoscale");
     GstElement *convert = gst_element_factory_make("videoconvert", nullptr);
+    
     gst_bin_add_many(GST_BIN(_display_bin), _display_queue, videorate, videoscale, capsfilter,
                      videoflip, convert, displaysink, nullptr);
+    
     if (!gst_element_link_many(_display_queue, videorate, videoscale, capsfilter, videoflip,
                                convert, displaysink, nullptr))
         throw std::runtime_error("Could not link elements");
@@ -77,3 +84,4 @@ void Display::createPipeline(GstElement *displaysink)
 }
 
 };
+

@@ -14,8 +14,11 @@ Snapshot::Snapshot(GstElement *main_pipeline, GstElement *main_tee, int directio
 Snapshot::~Snapshot()
 {
     gst_element_unlink(_main_tee, _snapshot_queue);
-    gst_bin_remove(GST_BIN(_main_bin), _snapshot_bin);
+    
+    // [Modified] Fix GStreamer-CRITICAL error
+    // Must set state to NULL *before* removing from bin to ensure clean shutdown
     gst_element_set_state(_snapshot_bin, GST_STATE_NULL);
+    gst_bin_remove(GST_BIN(_main_bin), _snapshot_bin);
 }
 
 void Snapshot::createPipeline()
@@ -64,6 +67,9 @@ void Snapshot::createPipeline()
     if (!gst_element_link_many(_main_tee, _snapshot_queue, videorate, capsfilter, videoflip,
                                convert, capsfilter2, appsink, nullptr))
         throw std::runtime_error("Could not link elements");
+
+    // [Modified] Explicitly set state to PLAYING to start data flow
+    gst_element_set_state(_snapshot_bin, GST_STATE_PLAYING);
 }
 
 std::shared_ptr<gsttcam::Snapshot> Snapshot::take()
@@ -73,6 +79,8 @@ std::shared_ptr<gsttcam::Snapshot> Snapshot::take()
   // clear previous image
   _snapshot = nullptr;
 
+  // If pipeline is not playing, this will wait forever. 
+  // The fix in createPipeline() solves this.
   _take_cond.wait(lock, [&]() { return _snapshot != nullptr; });
 
   return _snapshot;
@@ -138,3 +146,4 @@ GstFlowReturn Snapshot::snapshot_callback(GstElement *sink, gpointer user_data)
     return GST_FLOW_OK;
 }
 };
+
